@@ -1,12 +1,37 @@
-.env 
-demo_conflict.db 
-db_write_lock.json 
-predicted_*.sql 
-gold_*.sql 
-__pycache__/ 
-*.pyc 
-venv/ 
-agent1_demo.py 
-agent2_demo.py 
-conflict_demo.py 
-setup_demo_db.py 
+# Secrets
+.env
+
+# Output / benchmark results
+bird_*.txt
+bird_*.jsonl
+bird_*.json
+results_*.txt
+predicted_*.sql
+gold_*.sql
+*gold*.sql
+bird_predicted_*.sql
+extra_results.txt
+hard_results.txt
+
+# Databases
+*.db
+db_write_lock.json
+
+# Data directories (download separately)
+spider_data/
+test-suite-sql-eval/
+agent_memory_db/
+static/
+90/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+venv/
+.venv/
+
+# Misc
+*.pdf
+message_log.json
+planning_dev.json

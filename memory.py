@@ -240,6 +240,21 @@ def procedural_store(
         return False
     try:
         collection = _get_collection(PROCEDURAL_COLLECTION)
+
+        # Deduplication — skip if a near-identical entry already exists
+        dedup_results = collection.query(
+            query_texts=[question],
+            n_results=1,
+            where={"db_path": db_path}
+        )
+        if dedup_results and dedup_results["distances"] and dedup_results["distances"][0]:
+            distance = dedup_results["distances"][0][0]
+            similarity = 1 - distance
+            if similarity >= 0.99:
+                print(f"[MEMORY] Procedural dedup — near-identical entry exists "
+                      f"(similarity={similarity:.2f}), skipping store")
+                return False
+
         sh = schema_hash(schema)
 
         # Deterministic ID — same question on same schema overwrites old entry

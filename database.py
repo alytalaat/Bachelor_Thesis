@@ -12,7 +12,7 @@ def get_schema(db_path: str) -> str:
         tables = [row[0] for row in cursor.fetchall()]
         schema_parts = []
         for table in tables:
-            cursor.execute(f"PRAGMA table_info({table})")
+            cursor.execute(f'PRAGMA table_info("{table}")')
             columns = cursor.fetchall()
             col_defs = []
             for col in columns:
@@ -21,12 +21,12 @@ def get_schema(db_path: str) -> str:
                     col_def += " PRIMARY KEY"
                 col_defs.append(col_def)
 
-            cursor.execute(f"PRAGMA foreign_key_list({table})")
+            cursor.execute(f'PRAGMA foreign_key_list("{table}")')
             fks = cursor.fetchall()
             for fk in fks:
                 col_defs.append(f"FOREIGN KEY ({fk[3]}) REFERENCES {fk[2]}({fk[4]})")
 
-            schema_parts.append(f"CREATE TABLE {table} ({', '.join(col_defs)})")
+            schema_parts.append(f'CREATE TABLE "{table}" ({", ".join(col_defs)})')
         return "\n".join(schema_parts)
     except sqlite3.OperationalError as e:
         raise RuntimeError(f"Could not read schema: {e}") from e
@@ -40,6 +40,8 @@ def run_sql(db_path: str, sql: str) -> str:
     conn = None
     try:
         conn = sqlite3.connect(db_path, isolation_level=None)
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA busy_timeout=5000;")
         conn.execute("PRAGMA foreign_keys = ON")
         cursor = conn.cursor()
 
@@ -50,26 +52,49 @@ def run_sql(db_path: str, sql: str) -> str:
         #     if confirm.lower() != "yes":
         #         return "Operation cancelled by user."
 
-        # Multiple statements — use executescript
-        statements = [s.strip() for s in sql.split(";") if s.strip()]
-        if len(statements) > 1:
-            conn.executescript(sql)
-            return f"Success. {len(statements)} statements executed."
+        import time as _time
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # Multiple statements — use executescript
+                statements = [s.strip() for s in sql.split(";") if s.strip()]
+                if len(statements) > 1:
+                    conn.executescript(sql)
+                    result = f"Success. {len(statements)} statements executed."
+                else:
+                    cursor.execute(sql)
 
-        cursor.execute(sql)
+                    # Commit and report rows affected for write operations
+                    if sql.strip().upper().startswith(("INSERT", "UPDATE", "DELETE")):
+                        conn.commit()
+                        affected = cursor.rowcount
+                        result = f"Success. {affected} row(s) affected."
+                    else:
+                        # Fetch results for SELECT
+                        rows = cursor.fetchall()
+                        cols = [d[0] for d in cursor.description] if cursor.description else []
+                        if not rows:
+                            result = "No results."
+                        else:
+                            result = "\n".join([str(dict(zip(cols, row))) for row in rows[:100]])
 
-        # Commit and report rows affected for write operations
-        if sql.strip().upper().startswith(("INSERT", "UPDATE", "DELETE")):
-            conn.commit()
-            affected = cursor.rowcount
-            return f"Success. {affected} row(s) affected."
-
-        # Fetch results for SELECT
-        rows = cursor.fetchall()
-        cols = [d[0] for d in cursor.description] if cursor.description else []
-        if not rows:
-            return "No results."
-        return "\n".join([str(dict(zip(cols, row))) for row in rows[:100]])
+                if isinstance(result, str) and (
+                    "database is locked" in result.lower() or
+                    "sqlite_busy" in result.lower()
+                ):
+                    wait = 0.1 * (2 ** attempt)
+                    print(f"[DB] SQLITE_BUSY — retrying in {wait:.2f}s (attempt {attempt + 1}/{max_retries})")
+                    _time.sleep(wait)
+                    continue
+                return result
+            except Exception as e:
+                if "database is locked" in str(e).lower() or "sqlite_busy" in str(e).lower():
+                    wait = 0.1 * (2 ** attempt)
+                    print(f"[DB] SQLITE_BUSY exception — retrying in {wait:.2f}s (attempt {attempt + 1}/{max_retries})")
+                    _time.sleep(wait)
+                    continue
+                return f"ERROR: {e}"
+        return result
 
     except Exception as e:
         return f"ERROR: {str(e)}"

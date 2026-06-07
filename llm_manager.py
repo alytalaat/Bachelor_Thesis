@@ -16,17 +16,21 @@ import time
 import itertools
 from dotenv import load_dotenv
 from langchain_groq import ChatGroq
+from langchain_openai import ChatOpenAI
+
 
 load_dotenv()
 
 # ── API keys ──────────────────────────────────────────────────────────────────
 # Load all 5 keys. Keys not present in .env are silently skipped.
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 _RAW_KEYS = [
     os.getenv("GROQ_API_KEY_1"),
     os.getenv("GROQ_API_KEY_2"),
     os.getenv("GROQ_API_KEY_3"),
     os.getenv("GROQ_API_KEY_4"),
     os.getenv("GROQ_API_KEY_5"),
+    os.getenv("GROQ_API_KEY_6"),
 ]
 GROQ_API_KEYS: list[str] = [k for k in _RAW_KEYS if k]
 
@@ -52,9 +56,9 @@ _coder_cycle    = itertools.cycle(GROQ_API_KEYS)
 
 # ── Default model names ───────────────────────────────────────────────────────
 # Change these by calling set_models() before a benchmark run.
-_PLANNER_MODEL  = "openai/gpt-oss-120b"
+_PLANNER_MODEL  = "gpt-5.4-mini-2026-03-17"
 _VERIFIER_MODEL = "llama-3.3-70b-versatile"
-_CODER_MODEL    = "qwen/qwen3-32b"
+_CODER_MODEL    = "gpt-5.4-nano-2026-03-17"
 
 _PLANNER_TEMP  = 0
 _VERIFIER_TEMP = 0
@@ -128,6 +132,7 @@ def _invoke_with_rotation(
                     model=model,
                     temperature=temperature,
                     api_key=api_key,
+                    timeout=60,
                     **extra_kwargs,
                 )
                 return client.invoke(messages)
@@ -167,15 +172,26 @@ def _invoke_with_rotation(
         f"[LLM {role_label}] Rate-limited on all {num_keys} keys "
         f"after {max_rotations} full rotations. Increase key count or wait longer."
     )
+def _invoke_openai(messages: list, model: str, temperature: float) -> object:
+    """Invokes an OpenAI model directly."""
+    client = ChatOpenAI(
+        model=model,
+        temperature=temperature,
+        api_key=OPENAI_API_KEY,
+        timeout=120       
+    )
+    return client.invoke(messages)
+
+
+def _is_openai_model(model: str) -> bool:
+    return model.startswith("gpt-5.4") or model.startswith("gpt-5-") or model.startswith("gpt-4")
 
 
 # ── Public invoke functions ───────────────────────────────────────────────────
 
 def invoke_llm(messages: list) -> object:
-    """
-    Coordinator / Planner LLM call.
-    Uses _PLANNER_MODEL with round-robin key rotation.
-    """
+    if _is_openai_model(_PLANNER_MODEL):
+        return _invoke_openai(messages, _PLANNER_MODEL, _PLANNER_TEMP)
     extra = {}
     if "gpt-oss" in _PLANNER_MODEL or "reasoning" in _PLANNER_MODEL:
         extra = {"reasoning_effort": "high"}
@@ -190,11 +206,8 @@ def invoke_llm(messages: list) -> object:
 
 
 def invoke_verifier_llm(messages: list) -> object:
-    """
-    Verifier / Check-3 LLM call.
-    Uses _VERIFIER_MODEL with round-robin key rotation.
-    Verifier is kept fixed during ablation runs — only planner and coder vary.
-    """
+    if _is_openai_model(_VERIFIER_MODEL):
+        return _invoke_openai(messages, _VERIFIER_MODEL, _VERIFIER_TEMP)
     return _invoke_with_rotation(
         messages=messages,
         model=_VERIFIER_MODEL,
@@ -205,16 +218,8 @@ def invoke_verifier_llm(messages: list) -> object:
 
 
 def invoke_coder_llm(messages: list) -> object:
-    """
-    Coder LLM call (user_coder and admin_coder).
-    Uses _CODER_MODEL with round-robin key rotation.
-
-    NOTE: agent.py instantiates llm_coder = ChatGroq(...) directly.
-    Replace that line with:
-        from llm_manager import invoke_coder_llm as _coder_invoke
-    and call _coder_invoke(messages) instead of llm_coder.invoke(messages).
-    Or keep llm_coder and monkey-patch it — see MIGRATION NOTE below.
-    """
+    if _is_openai_model(_CODER_MODEL):
+        return _invoke_openai(messages, _CODER_MODEL, _CODER_TEMP)
     return _invoke_with_rotation(
         messages=messages,
         model=_CODER_MODEL,
@@ -222,7 +227,6 @@ def invoke_coder_llm(messages: list) -> object:
         key_cycle=_coder_cycle,
         role_label="Coder",
     )
-
 
 # ── Convenience: patch the coder in agent.py without editing it ───────────────
 # agent.py calls:  response = llm_coder.invoke(coder_prompt)

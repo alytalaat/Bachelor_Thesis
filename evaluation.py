@@ -25,6 +25,14 @@ import json
 import sqlite3
 import traceback
 import argparse
+import re
+
+def normalize_sql(sql):
+    # Replace INNER JOIN with JOIN
+    sql = re.sub(r'\bINNER\s+JOIN\b', 'JOIN', sql, flags=re.IGNORECASE)
+    # Replace CAST(x AS type) with x
+    sql = re.sub(r'CAST\s*\(\s*([^)]+?)\s+AS\s+\w+\s*\)', r'\1', sql, flags=re.IGNORECASE)
+    return sql
 
 from process_sql import tokenize, get_schema, get_tables_with_alias, Schema, get_sql
 
@@ -499,7 +507,7 @@ def evaluate(gold, predict, db_dir, etype, kmaps):
 
     eval_err_num = 0
     for p, g in zip(plist, glist):
-        p_str = p[0]
+        p_str = normalize_sql(p[0])
         g_str, db = g
         db_name = db
         db = os.path.join(db_dir, db, db + ".sqlite")
@@ -511,7 +519,8 @@ def evaluate(gold, predict, db_dir, etype, kmaps):
 
         try:
             p_sql = get_sql(schema, p_str)
-        except:
+        except Exception as e:
+            print(f"PARSE ERROR on: {p_str[:100]} — {e}")
             # If p_sql is not valid, then we will use an empty sql to evaluate with the correct sql
             p_sql = {
             "except": None,
