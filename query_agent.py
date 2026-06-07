@@ -570,6 +570,7 @@ def coordinator(state: QueryState) -> QueryState:
             "conversation_id": conversation_id,
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "role": role,
+            "user_id": user_id,
             "allowed_ops": allowed_operations,
             "question": question,
             "db_path": db_path,
@@ -1634,7 +1635,7 @@ CONSTRAINTS:
         return {**state, "message": outgoing, "verdict": "queued"}
 
     # No fallbacks left — retry from Coder with failure reason
-    if coordinator_retries < 0:
+    if coordinator_retries < 3:
         print(f"[COORDINATOR] Verifier failed (attempt {coordinator_retries + 1}/3): {reason}")
 
         task_list[0]["status"] = "in_progress"
@@ -1721,7 +1722,7 @@ CONSTRAINTS:
             short_term=final_short_term,
             db_path=db_path,
             schema=allowed_schema,
-            user_id=user_id if role == "user" else None
+            user_id=plan.get("initial_state", {}).get("user_id", None) if role == "user" else None
         )
 
         outgoing = create_message(
